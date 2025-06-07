@@ -3,14 +3,19 @@
 import socket
 import sys
 import time
+import yaml
 
-address = ""
-port = 3493
-user = ""
-password = ""
-ups_name = ""
+def read_config_file(filename="nut-client-config.yaml"):
+    with open(filename, "r") as f:
+        config = yaml.safe_load(f)
+    #address = config["address"]
+    #port = config["port"]
+    #user = config["user"]
+    #password = config["password"]
+    #ups_name = config["ups_name"]
+    return config
 
-def connect(sock, address, port):
+def connect(sock, address, port=3493):
     try:
         sock.settimeout(10)
         sock.connect((address, port))
@@ -116,25 +121,15 @@ def list_ups_vars(ups_name, ups_vars):
     for var in ups_vars:
         print(f"{var[0]}: {var[1]}")
 
-def read_ups_status(sock, ups_name):
-    sock.sendall(f"GET VAR {ups_name} ups.status\n".encode('utf-8'))
-    read_status = recv_line(sock).decode('utf-8').split()[3].strip('"')
-    if "OL" in read_status:
-        status = "Online"
-    elif "OB" in read_status:
-        status = "On Battery"
-    else:
-        status = "Unknown status"
-    return status
-
-def read_ups_charge(sock, ups_name):
-    sock.sendall(f"GET VAR {ups_name} battery.charge\n".encode('utf-8'))
+def read_ups_var(sock, ups_name, var_name):
+    sock.sendall(f"GET VAR {ups_name} {var_name}\n".encode('utf-8'))
     return recv_line(sock).decode('utf-8').split()[3].strip('"')
 
+config = read_config_file()
 sock = socket.socket()
 ups_vars = []
 
-if not connect(sock, address, port):
+if not connect(sock, config['nut']['address'], port):
     sys.exit(1)
     
 if user or password:
@@ -150,15 +145,16 @@ if not ups_name:
         print("No data received from LIST UPS")
         sys.exit(1)
 
-ups_status = read_ups_status(sock, ups_name)
+ups_status = read_ups_var(sock, ups_name, "ups.status")
 prev_ups_status = ups_status
-ups_charge = read_ups_charge(sock, ups_name)
+ups_charge = read_ups_var(sock, ups_name, "battery.charge")
 while True:
-    ups_status = read_ups_status(sock, ups_name)
+    ups_status = read_ups_var(sock, ups_name, "ups.status")
+    ups_charge = read_ups_var(sock, ups_name, "battery.charge")
     print(ups_status)
     print(ups_charge)
     read_ups_vars(sock, ups_name, ups_vars)
-    print(ups_vars)
+    #print(ups_vars)
     if ups_status != prev_ups_status:
         print(f"UPS status changed from {prev_ups_status} to {ups_status}")
         prev_ups_status = ups_status
