@@ -179,10 +179,32 @@ sock.close()
 # curl -s "http://localhost:7125/printer/objects/query?extruder&heater_bed" | jq -r '.result.status.extruder.target'
 # 0
 #
+# Check print status
+# root@Rockchip:/root# curl -s "http://localhost:7125/printer/objects/query?print_stats" | jq -r '.result.status.print_stats.state'
+# printing
+## or
+# paused
+#
 # Set nozzle temp
 # curl -sX POST "http://localhost:7125/printer/gcode/script?script=M104%20S200" | jq -r '.result'
 # ok
 #
-##############
-# Notes
+# Pause print
+# curl -sX POST "http://localhost:7125/printer/print/pause"
+# No output due to -s
+#
+# Resume print
+# curl -sX POST "http://localhost:7125/printer/print/resume"
+# No output due to -s
+# 
+### UPS Load testing
+### These tests were done with a 1000W CyberPower UPS and a Kobra 3 Max with Ace turned off watching ups.load from NUT. Active print was with TPU at 207C nozzle temp and 60C bed temp.
+### Kobra 3 typically peaks around 900-1000W during initial bed heating at start of job with Ace not activly drying.
+### Load during active printing: 25-40%
+### Load during pause, nozzle set to 140C, bed maintaining 60C: 10-30% while maintaining both tempratures after nozzle cooled down.
+### Load after manually disabling nozzle heater: 10-20% to maintain bed temp.
+### Load on resume with nozzle heating back up to print temp: peaked around 30%, but I suspect this was low because the nozzle heated up fast and NUT only pools every 30 seconds.
+###
+### These tests will need to be repeated later with Ace drying turned on and with a more responsive load monitor such as the UPS screen or another device like a Kill-A-Watt or generic Amp Meter.
+#
 ##############
