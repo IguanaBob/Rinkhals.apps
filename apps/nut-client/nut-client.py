@@ -10,6 +10,15 @@ user = ""
 password = ""
 ups_name = ""
 
+def connect(sock, address, port):
+  try:
+    sock.settimeout(10)
+    sock.connect((address, port))
+  except socket.error as e:
+    print(f"Could not connect to {address}:{port} - {e}")
+    sys.exit(1)
+  return True
+
 def nut_login(socket, user, password):
     if user:
         socket.send(f"USERNAME {user}\n".encode('utf-8'))
@@ -83,6 +92,13 @@ def read_ups_vars(sock, ups_name, ups_vars):
             if not data:
                 return ("No data received")
             buffer += data
+def list_ups_vars(ups_name, ups_vars):
+    print(f"UPS: {ups_name}")
+    if not ups_vars:
+        print("No variables found")
+        return
+    for var in ups_vars:
+        print(f"{var[0]}: {var[1]}")
 
 def read_ups_status(sock, ups_name):
   sock.send(f"GET VAR {ups_name} ups.status\n".encode('utf-8'))
@@ -98,23 +114,7 @@ def read_ups_charge(sock, ups_name):
   sock.send(f"GET VAR {ups_name} battery.charge\n".encode('utf-8'))
   response = sock.recv(64)
   return response.decode('utf-8').split(" ")[3].split('"')[1]
-  
-def connect(sock, address, port):
-  try:
-    sock.settimeout(10)
-    sock.connect((address, port))
-  except socket.error as e:
-    print(f"Could not connect to {address}:{port} - {e}")
-    sys.exit(1)
-  return True
 
-def list_ups_vars(ups_name, ups_vars):
-    print(f"UPS: {ups_name}")
-    if not ups_vars:
-        print("No variables found")
-        return
-    for var in ups_vars:
-        print(f"{var[0]}: {var[1]}")
 
 sock = socket.socket()
 ups_vars = []
@@ -144,7 +144,6 @@ while True:
   print(ups_charge)
   read_ups_vars(sock, ups_name, ups_vars)
   print(ups_vars)
-  
 
   if ups_status != prev_ups_status:
     print(f"UPS status changed from {prev_ups_status} to {ups_status}")
@@ -164,8 +163,6 @@ while True:
             # Something to resume the print
 
   time.sleep(5)
-
-
 
 sock.close()
 
