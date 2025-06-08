@@ -1,5 +1,0 @@
-address: 192.168.1.50  # Your NUT server IP address or hostname
-port: 3493             # Port your NUT server is listening on (default 3493)
-user:                  # Your NUT client username (if required)
-password:              # Your NUT client password (if required)
-ups_name:              # Name of the UPS you want to monitor from ups.conf on your NUT server. If empty or missing the first UPS returned by the "UPS LIST" command will be used.

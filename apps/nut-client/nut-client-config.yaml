@@ -1,6 +1,0 @@
-nut:
-  address: ""
-  port: 3493
-  user: nut
-  password: nut
-  ups_name: nutdev1

@@ -3,30 +3,30 @@
 import socket
 import sys
 import time
-import yaml
+import configparser
 
-def read_config_file(filename="nut-client-config.yaml"):
+def read_config_file(filename="nut-client-config.ini"):
+    config = configparser.ConfigParser()
     try:
         with open(filename, "r") as f:
-            config = yaml.safe_load(f) or {}
+            config.read_file(f)
     except FileNotFoundError:
         print(f"Config file not found: {filename}", file=sys.stderr)
         sys.exit(1)
     except PermissionError:
-        print(f"Permission denied reading config file: {filename}", file=sys.stderr)
-        sys.exit(1)
-    except yaml.YAMLError as e:
-        print(f"Invalid YAML in config file: {filename}\n{e}", file=sys.stderr)
+        print(f"Permission denied: {filename}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error reading config file: {e}", file=sys.stderr)
         sys.exit(1)
     global ups_name, address, port, user, password
-    ups_name = config.get('ups_name')
-    address = config.get('address') or "localhost"
-    port = config.get('port') or 3493
-    user = config.get('user')
-    password = config.get('password')
+    section = config["nut"]
+    ups_name = section.get('ups_name')  # Need clean error for when configured UPS does not exist
+    address = section.get('address') or "localhost"
+    port = int(section.get('port') or 3493)
+    user = section.get('user')
+    password = section.get('password')
+
     return True
 
 def connect(sock, address, port):
