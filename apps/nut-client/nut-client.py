@@ -6,22 +6,53 @@ import time
 import yaml
 
 def read_config_file(filename="nut-client-config.yaml"):
-    with open(filename, "r") as f:
-        config = yaml.safe_load(f)
-    #address = config["address"]
-    #port = config["port"]
-    #user = config["user"]
-    #password = config["password"]
-    #ups_name = config["ups_name"]
-    return config
+    try:
+        with open(filename, "r") as f:
+            config = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        print(f"Config file not found: {filename}", file=sys.stderr)
+        sys.exit(1)
+    except PermissionError:
+        print(f"Permission denied reading config file: {filename}", file=sys.stderr)
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        print(f"Invalid YAML in config file: {filename}\n{e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error reading config file: {e}", file=sys.stderr)
+        sys.exit(1)
+    global ups_name, address, port, user, password
+    ups_name = config.get('ups_name')
+    address = config.get('address') or "localhost"
+    port = config.get('port') or 3493
+    user = config.get('user')
+    password = config.get('password')
+    return True
 
-def connect(sock, address, port=3493):
+def connect(sock, address, port):
     try:
         sock.settimeout(10)
         sock.connect((address, port))
     except socket.error as e:
-        print(f"Could not connect to {address}:{port} - {e}")
+        print(f"Could not connect to {address}:{port} - {e}", file=sys.stderr)
         sys.exit(1)
+    return True
+
+def login(socket, user, password):
+    if user:
+        socket.sendall(f"USERNAME {user}\n".encode('utf-8'))
+        response = socket.recv(64)
+        if response != b"OK\n":
+            print("Username not accepted")
+            return False
+        print("Username accepted")
+    if password:
+        socket.sendall(f"PASSWORD {password}\n".encode('utf-8'))
+        response = socket.recv(64)
+        if response != b"OK\n":
+            print("Password not accepted")
+            return False
+        print("Password accepted")
     return True
 
 def recv_line(sock):
@@ -39,27 +70,11 @@ def recv_line(sock):
         line, buffer = buffer, b""
     return line
 
-def nut_login(socket, user, password):
-    if user:
-        socket.send(f"USERNAME {user}\n".encode('utf-8'))
-        response = socket.recv(64)
-        if response != b"OK\n":
-            print("Username not accepted")
-            return False
-        print("Username accepted")
-    if password:
-        socket.send(f"PASSWORD {password}\n".encode('utf-8'))
-        response = socket.recv(64)
-        if response != b"OK\n":
-            print("Password not accepted")
-            return False
-        print("Password accepted")
-    return True
-
 def auto_select_ups(sock, ups_name):
     # For now this automatically selects the first UPS found
     ups_list = []
-    sock.send(b"LIST UPS\n")
+    print("Auto-selecting UPS...")
+    sock.sendall(b"LIST UPS\n")
     buffer = b""
     while True:
         data = sock.recv(256)
@@ -76,6 +91,7 @@ def auto_select_ups(sock, ups_name):
             if text == "END LIST UPS":
                 return ("No UPS found")
             elif text.startswith("UPS "):
+                print("Selecting first found UPS: " + text.split(" ")[1])
                 return (text.split(" ")[1])
         else:
             data = sock.recv(2048)
@@ -85,7 +101,7 @@ def auto_select_ups(sock, ups_name):
 
 def read_ups_vars(sock, ups_name, ups_vars):
     ups_vars.clear()
-    sock.send(f"LIST VAR {ups_name}\n".encode('utf-8'))
+    sock.sendall(f"LIST VAR {ups_name}\n".encode('utf-8'))
     buffer = b""
     while True:
         data = sock.recv(256)
@@ -102,10 +118,8 @@ def read_ups_vars(sock, ups_name, ups_vars):
             text = line.decode('utf-8').strip()
             marker = f"END LIST VAR {ups_name}\n".encode("utf-8")
             if marker in buffer:
-                #print("No more data received")
                 return
             elif text.startswith("VAR "):
-                #print(text.split(" ")[2:4])
                 ups_vars.append(text.split(" ")[2:4])
         else:
             data = sock.recv(2048)
@@ -125,16 +139,14 @@ def read_ups_var(sock, ups_name, var_name):
     sock.sendall(f"GET VAR {ups_name} {var_name}\n".encode('utf-8'))
     return recv_line(sock).decode('utf-8').split()[3].strip('"')
 
-config = read_config_file()
+### Main start ###
+
 sock = socket.socket()
 ups_vars = []
 
-if not connect(sock, config['nut']['address'], port):
-    sys.exit(1)
-    
-if user or password:
-    if not login(sock, user, password):
-        sys.exit(1)
+read_config_file()
+connect(sock, address, port)
+if user or password: login(sock, user, password) or sys.exit(1)
 
 if not ups_name:
     ups_name = auto_select_ups(sock,ups_name)
