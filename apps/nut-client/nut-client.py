@@ -21,13 +21,14 @@ def read_config_file(filename="nut-client-config.ini"):
     except Exception as e:
         print(f"Error reading config file: {e}", file=sys.stderr)
         sys.exit(1)
-    global ups_name, address, port, user, password
+    global ups_name, address, port, user, password, is_on_printer
     section = config["nut"]
     ups_name = section.get('ups_name')  # Need clean error for when configured UPS does not exist
     address = section.get('address') or "localhost"
     port = int(section.get('port') or 3493)
     user = section.get('user')
     password = section.get('password')
+    is_on_printer = section.get('is_on_printer', 'false').lower() in ('true', '1', 'yes')  # For testing outside of printer
     return True
 
 def connect(sock, address, port):
@@ -204,13 +205,14 @@ ups_vars = []
 
 read_config_file()
 
-for ace_id in get_ace_pro_ids():
-    print(f"ACE Pro ID: {ace_id}")
-    status = get_ace_pro_status(ace_id)
-    if status:
-        print(f"ACE Pro {ace_id} status: {status}")
-    else:
-        print(f"ACE Pro {ace_id} not found or no status available")
+if is_on_printer:
+    for ace_id in get_ace_pro_ids():
+        print(f"ACE Pro ID: {ace_id}")
+        status = get_ace_pro_status(ace_id)
+        if status:
+            print(f"ACE Pro {ace_id} status: {status}")
+        else:
+            print(f"ACE Pro {ace_id} not found or no status available")
 
 connect(sock, address, port)
 if user or password: login(sock, user, password) or sys.exit(1)
