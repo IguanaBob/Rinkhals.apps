@@ -214,48 +214,50 @@ if is_on_printer:
         else:
             print(f"ACE Pro {ace_id} not found or no status available")
 
-connect(sock, address, port)
-if user or password: login(sock, user, password) or sys.exit(1)
+try:
+    connect(sock, address, port)
+    if user or password: login(sock, user, password) or sys.exit(1)
 
-if not ups_name:
-    ups_name = auto_select_ups(sock,ups_name)
-    if ups_name == "No UPS found":
-        print("No UPS found")
-        sys.exit(1)
-    elif ups_name == "No data received":
-        print("No data received from LIST UPS")
-        sys.exit(1)
+    if not ups_name:
+        ups_name = auto_select_ups(sock,ups_name)
+        if ups_name == "No UPS found":
+            print("No UPS found")
+            sys.exit(1)
+        elif ups_name == "No data received":
+            print("No data received from LIST UPS")
+            sys.exit(1)
 
-ups_status = read_ups_var(sock, ups_name, "ups.status")
-prev_ups_status = ups_status
-ups_charge = read_ups_var(sock, ups_name, "battery.charge")
-while True:
     ups_status = read_ups_var(sock, ups_name, "ups.status")
+    prev_ups_status = ups_status
     ups_charge = read_ups_var(sock, ups_name, "battery.charge")
-    print(ups_status)
-    print(ups_charge)
-    read_ups_vars(sock, ups_name, ups_vars)
-    #print(ups_vars)
-    if ups_status != prev_ups_status:
-        print(f"UPS status changed from {prev_ups_status} to {ups_status}")
-        prev_ups_status = ups_status
-        if ups_status == "On Battery":
-            print("UPS is on battery power!")
-            print("Pausing print")
-            # Something to pause the print
-            print("Turning off nozzle heater")
-            # Something to turn off the nozzle heater
-        if ups_status == "Online":
-            print("UPS is back online!")
-        if ups_charge >= "90":
-            print("Turning on nozzle heater")
-            # Something to turn on the nozzle heater
-            print("Resuming print")
-            # Something to resume the print
-    time.sleep(5)
-
-sock.close()
-
+    while True:
+        ups_status = read_ups_var(sock, ups_name, "ups.status")
+        ups_charge = read_ups_var(sock, ups_name, "battery.charge")
+        print(ups_status)
+        print(ups_charge)
+        read_ups_vars(sock, ups_name, ups_vars)
+        #print(ups_vars)
+        if ups_status != prev_ups_status:
+            print(f"UPS status changed from {prev_ups_status} to {ups_status}")
+            prev_ups_status = ups_status
+            if ups_status == "On Battery":
+                print("UPS is on battery power!")
+                print("Pausing print")
+                # Something to pause the print
+                print("Turning off nozzle heater")
+                # Something to turn off the nozzle heater
+            if ups_status == "Online":
+                print("UPS is back online!")
+            if ups_charge >= "90":
+                print("Turning on nozzle heater")
+                # Something to turn on the nozzle heater
+                print("Resuming print")
+                # Something to resume the print
+        time.sleep(5)
+except KeyboardInterrupt:
+    print("\nInterrupted by user, shutting down…")
+finally:
+    sock.close()
 
 ##############
 # Notes
