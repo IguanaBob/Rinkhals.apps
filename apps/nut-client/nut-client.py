@@ -4,6 +4,8 @@ import socket
 import sys
 import time
 import configparser
+import json
+import random
 
 def read_config_file(filename="nut-client-config.ini"):
     config = configparser.ConfigParser()
@@ -138,12 +140,78 @@ def read_ups_var(sock, ups_name, var_name):
     sock.sendall(f"GET VAR {ups_name} {var_name}\n".encode('utf-8'))
     return recv_line(sock).decode('utf-8').split()[3].strip('"')
 
+def klippy_command(payload, socket_path="/tmp/unix_uds1", timeout=5):
+    msg = json.dumps(payload).encode('utf-8') + b'\x03'
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(socket_path)
+        sock.sendall(msg)
+        sock.shutdown(socket.SHUT_WR)
+        data = bytearray()
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data.extend(chunk)
+            if b'\x03' in chunk:
+                break
+        sock.shutdown(socket.SHUT_RD)
+    finally:
+        sock.close()
+    raw = data.rstrip(b'\x03')
+    if not raw:
+        return False
+    return json.loads(raw.decode('utf-8'))
+
+def get_ace_pro_ids(socket_path="/tmp/unix_uds1"):
+    payload = {
+        "method": "objects/query",
+        "params": {"objects": {"filament_hub": None}},
+        "id": random.randint(0, 32767)
+    }
+    resp = klippy_command(payload)
+    if not resp or 'result' not in resp or 'status' not in resp or 'filament_hub' not in resp['result']['status']:
+        return []
+    hubs = resp.get('result', {}) \
+               .get('status', {}) \
+               .get('filament_hub', {}) \
+               .get('filament_hubs', [])
+    return [h.get('id') for h in hubs]    
+
+def get_ace_pro_status(ace_id, socket_path="/tmp/unix_uds1"):
+    payload = {
+        "method": "objects/query",
+        "params": {"objects": {"filament_hub": None}},
+        "id": random.randint(0, 32767)
+    }
+    resp = klippy_command(payload)
+    if not resp or 'result' not in resp or 'status' not in resp or 'filament_hub' not in resp['result']['status']:
+        return []
+    hubs = resp.get('result', {}) \
+               .get('status', {}) \
+               .get('filament_hub', {}) \
+               .get('filament_hubs', [])
+    for hub in hubs:
+        if hub.get('id') == ace_id:
+            return hub.get('dryer_status', {})
+    return None
+
 ### Main start ###
 
 sock = socket.socket()
 ups_vars = []
 
 read_config_file()
+
+for ace_id in get_ace_pro_ids():
+    print(f"ACE Pro ID: {ace_id}")
+    status = get_ace_pro_status(ace_id)
+    if status:
+        print(f"ACE Pro {ace_id} status: {status}")
+    else:
+        print(f"ACE Pro {ace_id} not found or no status available")
+
 connect(sock, address, port)
 if user or password: login(sock, user, password) or sys.exit(1)
 
@@ -217,6 +285,42 @@ sock.close()
 # curl -sX POST "http://localhost:7125/printer/print/resume"
 # No output due to -s
 # 
+## Ace Pro control: ##
+# These tests use the klippy-command.sh script in the web-ui app to send commands to Klipper.
+# It should be possible to replace this with Python socket connections.
+#
+# Check ACE ids to see if one or more is connected.
+# root@Rockchip:/tmp/nut# bash klippy-command.sh  "{\"method\":\"objects/query\",\"params\":{\"objects\":{\"filament_hub\":null}},\"id\":$RANDOM}" | jq -r '.result.status.filament_hub.filament_hubs[].id'
+# 0
+#
+# Check ACE Pro status
+# root@Rockchip:/tmp/nut# bash klippy-command.sh  "{\"method\":\"objects/query\",\"params\":{\"objects\":{\"filament_hub\":null}},\"id\":$RANDOM}" | jq -r '.result.status.filament_hub.filament_hubs[0].dryer_status'
+# {
+#   "status": "drying",
+#   "target_temp": 45,
+#   "duration": 240,
+#   "remain_time": 13303
+# }
+#
+# Stop drying:
+# root@Rockchip:/tmp/nut# bash klippy-command.sh  "{\"method\":\"filament_hub/stop_drying\",\"params\":{\"id\":0},\"id\":$RANDOM}"
+# {"id":32079,"result":{}}
+#
+# Stop drying, look for result:
+# root@Rockchip:/tmp/nut# bash klippy-command.sh  "{\"method\":\"filament_hub/stop_drying\",\"params\":{\"id\":0},\"id\":$RANDOM}" | jq -e ".result == {}"
+# true
+#
+# Start drying:
+# !/bin/bash
+# ace_id=$1
+# duration=$2
+# temp=$3
+# 
+# cd "$(dirname "$0")"
+# ./klippy-command.sh "{\"method\":\"filament_hub/start_drying\",\"params\":{\"duration\":$duration,\"fan_speed\":0,\"id\":$ace_id,\"temp\":$temp},\"id\":$RANDOM}" | jq -e ".result == {}"
+
+
+#
 ### UPS Load testing
 ### These tests were done with a 1000W CyberPower UPS and a Kobra 3 Max with Ace turned off watching ups.load from NUT. Active print was with TPU at 207C nozzle temp and 60C bed temp and garage temp ~85F.
 ### Kobra 3 typically peaks around 900-1000W during initial bed heating at start of job with Ace not activly drying.
