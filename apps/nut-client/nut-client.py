@@ -111,31 +111,34 @@ def auto_select_ups(sock, ups_name):
 
 def read_ups_vars(sock, ups_name, ups_vars):
     ups_vars.clear()
-    sock.sendall(f"LIST VAR {ups_name}\n".encode('utf-8'))
-    buffer = b""
-    while True:
-        data = sock.recv(256)
-        if not data:
-            return
-        buffer += data
-        marker = f"BEGIN LIST VAR {ups_name}\n".encode("utf-8")
-        if marker in buffer:
-            buffer = buffer.split(marker, 1)[1]
-            break
-    while True:
-        if b"\n" in buffer:
-            line, buffer = buffer.split(b"\n", 1)
-            text = line.decode('utf-8').strip()
-            marker = f"END LIST VAR {ups_name}\n".encode("utf-8")
-            if marker in buffer:
-                return
-            elif text.startswith("VAR "):
-                ups_vars.append(text.split(" ")[2:4])
-        else:
-            data = sock.recv(2048)
+    try:
+        sock.sendall(f"LIST VAR {ups_name}\n".encode('utf-8'))
+        buffer = b""
+        while True:
+            data = sock.recv(256)
             if not data:
-                return ("No data received")
+                return
             buffer += data
+            marker = f"BEGIN LIST VAR {ups_name}\n".encode("utf-8")
+            if marker in buffer:
+                buffer = buffer.split(marker, 1)[1]
+                break
+        while True:
+            if b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                text = line.decode('utf-8').strip()
+                marker = f"END LIST VAR {ups_name}\n".encode("utf-8")
+                if marker in buffer:
+                    return
+                elif text.startswith("VAR "):
+                    ups_vars.append(text.split(" ")[2:4])
+            else:
+                data = sock.recv(2048)
+                if not data:
+                    return ("No data received")
+                buffer += data
+    except Exception as e:
+        raise Exception(f"Unable to read vars from UPS")
 
 def list_ups_vars(ups_name, ups_vars):
     print(f"UPS: {ups_name}")
