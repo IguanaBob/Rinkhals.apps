@@ -12,94 +12,102 @@ def read_config_file(filename="nut-client-config.ini"):
     try:
         with open(filename, "r") as f:
             config.read_file(f)
-    except FileNotFoundError:
-        print(f"Config file not found: {filename}", file=sys.stderr)
-        sys.exit(1)
-    except PermissionError:
-        print(f"Permission denied: {filename}", file=sys.stderr)
-        sys.exit(1)
     except Exception as e:
-        print(f"Error reading config file: {e}", file=sys.stderr)
-        sys.exit(1)
-    global ups_name, address, port, user, password, is_on_printer
-    section = config["nut"]
-    ups_name = section.get('ups_name')  # Need clean error for when configured UPS does not exist
-    address = section.get('address') or "localhost"
-    port = int(section.get('port') or 3493)
-    user = section.get('user')
-    password = section.get('password')
-    is_on_printer = section.get('is_on_printer', 'false').lower() in ('true', '1', 'yes')  # For testing outside of printer
-    return True
+        raise Exception(f"Error reading config file {filename}: {e}")
+    else:
+        global ups_name, address, port, user, password, is_on_printer
+        section = config["nut"]
+        ups_name = section.get('ups_name')  # Need clean error for when configured UPS does not exist
+        address = section.get('address') or "localhost"
+        port = int(section.get('port') or 3493)
+        user = section.get('user')
+        password = section.get('password')
+        is_on_printer = section.get('is_on_printer', 'false').lower() in ('true', '1', 'yes') or False  # For testing outside of printer
+        return True
 
 def connect(sock, address, port):
     try:
         sock.settimeout(10)
         sock.connect((address, port))
-    except socket.error as e:
-        print(f"Could not connect to {address}:{port} - {e}", file=sys.stderr)
-        sys.exit(1)
-    return True
-
-def login(socket, user, password):
-    if user:
-        socket.sendall(f"USERNAME {user}\n".encode('utf-8'))
-        response = socket.recv(64)
-        if response != b"OK\n":
-            print("Username not accepted")
-            return False
-        print("Username accepted")
-    if password:
-        socket.sendall(f"PASSWORD {password}\n".encode('utf-8'))
-        response = socket.recv(64)
-        if response != b"OK\n":
-            print("Password not accepted")
-            return False
-        print("Password accepted")
-    return True
-
-def recv_line(sock):
-    buffer = b""
-    # Read data until we find a newline character
-    while b"\n" not in buffer:
-        data = sock.recv(256)
-        if not data:
-            break
-        buffer += data
-    # Return the first line
-    if b"\n" in buffer:
-        line, buffer = buffer.split(b"\n", 1)
+    except Exception as e:
+        sock.close()
+        raise Exception(f"Could not connect to {address}:{port} - {e}")
     else:
-        line, buffer = buffer, b""
-    return line
+        return True
+
+def login(sock, user=None, password=None, timeout=5):
+    sock.settimeout(timeout)
+    try: 
+        if user:
+            sock.sendall(f"USERNAME {user}\n".encode("utf-8"))
+            resp = recv_line(sock)
+            if resp != b"OK":
+                text = resp.decode("utf-8", errors="replace")
+                raise ValueError(f"Username not accepted, server replied: {text!r}")
+            print(f"Username accepted")
+        if password:
+            sock.sendall(f"PASSWORD {password}\n".encode("utf-8"))
+            resp = recv_line(sock)
+            if resp != b"OK":
+                text = resp.decode("utf-8", errors="replace")
+                raise ValueError(f"Password not accepted, server replied: {text!r}")
+            print(f"Password accepted")
+    except socket.error as e:
+        raise ConnectionError(f"Failed to send username: {e}") from e
+    except socket.timeout as e:
+        raise TimeoutError(f"No response for username within {timeout}s") from e
+    except Exception as e:
+        raise (f"Could not log in to user {user} - {e}")
+    else:
+        return True
+
+def recv_line(sock, bufsize=256, eol=b"\n"): 
+    data = bytearray()
+    try:
+        while True:
+            chunk = sock.recv(bufsize)
+            if not chunk:
+                break
+            data.extend(chunk)
+            if eol in chunk:
+                break
+        line, *rest = data.split(eol, 1)
+    except Exception as e:
+        raise (f"Could not read data from UPS - {e}")
+    else:
+        return bytes(line)
 
 def auto_select_ups(sock, ups_name):
     # For now this automatically selects the first UPS found
     ups_list = []
     print("Auto-selecting UPS...")
-    sock.sendall(b"LIST UPS\n")
-    buffer = b""
-    while True:
-        data = sock.recv(256)
-        if not data:
-            return
-        buffer += data
-        if b"BEGIN LIST UPS\n" in buffer:
-            buffer = buffer.split(b"BEGIN LIST UPS\n", 1)[1]
-            break
-    while True:
-        if b"\n" in buffer:
-            line, buffer = buffer.split(b"\n", 1)
-            text = line.decode('utf-8').strip()
-            if text == "END LIST UPS":
-                return ("No UPS found")
-            elif text.startswith("UPS "):
-                print("Selecting first found UPS: " + text.split(" ")[1])
-                return (text.split(" ")[1])
-        else:
-            data = sock.recv(2048)
+    try:
+        sock.sendall(b"LIST UPS\n")
+        buffer = b""
+        while True:
+            data = sock.recv(256)
             if not data:
-                return ("No data received")
+                return
             buffer += data
+            if b"BEGIN LIST UPS\n" in buffer:
+                buffer = buffer.split(b"BEGIN LIST UPS\n", 1)[1]
+                break
+        while True:
+            if b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                text = line.decode('utf-8').strip()
+                if text == "END LIST UPS":
+                    return ("No UPS found")
+                elif text.startswith("UPS "):
+                    print("Selecting first found UPS: " + text.split(" ")[1])
+                    return (text.split(" ")[1])
+            else:
+                data = sock.recv(2048)
+                if not data:
+                    return ("No data received")
+                buffer += data
+    except Exception as e:
+        raise(f"Could not auto-select UPS")
 
 def read_ups_vars(sock, ups_name, ups_vars):
     ups_vars.clear()
@@ -203,20 +211,20 @@ def get_ace_pro_status(ace_id, socket_path="/tmp/unix_uds1"):
 sock = socket.socket()
 ups_vars = []
 
-read_config_file()
-
-if is_on_printer:
-    for ace_id in get_ace_pro_ids():
-        print(f"ACE Pro ID: {ace_id}")
-        status = get_ace_pro_status(ace_id)
-        if status:
-            print(f"ACE Pro {ace_id} status: {status}")
-        else:
-            print(f"ACE Pro {ace_id} not found or no status available")
-
 try:
+    read_config_file()
     connect(sock, address, port)
-    if user or password: login(sock, user, password) or sys.exit(1)
+    if user or password:
+        login(sock, user, password)
+
+    if is_on_printer:
+        for ace_id in get_ace_pro_ids():
+            print(f"ACE Pro ID: {ace_id}")
+            status = get_ace_pro_status(ace_id)
+            if status:
+                print(f"ACE Pro {ace_id} status: {status}")
+            else:
+                print(f"ACE Pro {ace_id} not found or no status available")
 
     if not ups_name:
         ups_name = auto_select_ups(sock,ups_name)
@@ -254,9 +262,15 @@ try:
                 print("Resuming print")
                 # Something to resume the print
         time.sleep(5)
+
 except KeyboardInterrupt:
     print("\nInterrupted by user, shutting down…")
+    sys.exit(0)
+except Exception as e:
+    print(f"An error occurred: {e}", file=sys.stderr)    
+    sys.exit(1)
 finally:
+    print("Closing socket connection")
     sock.close()
 
 ##############
