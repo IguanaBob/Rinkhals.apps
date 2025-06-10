@@ -25,7 +25,7 @@ def read_config_file(filename="nut-client-config.ini"):
         is_on_printer = section.get('is_on_printer', 'false').lower() in ('true', '1', 'yes') or False  # For testing outside of printer
         return True
 
-def connect(sock, address, port):
+def connect(sock, address, port=3493):
     try:
         sock.settimeout(10)
         sock.connect((address, port))
@@ -77,68 +77,71 @@ def recv_line(sock, bufsize=256, eol=b"\n"):
     else:
         return bytes(line)
 
-def auto_select_ups(sock, ups_name):
-    # For now this automatically selects the first UPS found
-    ups_list = []
-    print("Auto-selecting UPS...")
+def auto_select_ups(sock, bufsize=256, eol=b"\n"):
     try:
         sock.sendall(b"LIST UPS\n")
-        buffer = b""
+        data = bytearray()
         while True:
-            data = sock.recv(256)
-            if not data:
-                return
-            buffer += data
-            if b"BEGIN LIST UPS\n" in buffer:
-                buffer = buffer.split(b"BEGIN LIST UPS\n", 1)[1]
+            chunk = sock.recv(bufsize)
+            if not chunk:
+                raise Exception("No data received after LIST UPS")
+            data.extend(chunk)
+            if b"BEGIN LIST UPS\n" in data:
+                _, rest = data.split(b"BEGIN LIST UPS\n", 1)
+                data = bytearray(rest)
                 break
         while True:
-            if b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                text = line.decode('utf-8').strip()
-                if text == "END LIST UPS":
-                    return ("No UPS found")
-                elif text.startswith("UPS "):
-                    print("Selecting first found UPS: " + text.split(" ")[1])
-                    return (text.split(" ")[1])
+            if eol in data:
+                line, rest = data.split(eol, 1)
+                data = bytearray(rest)
             else:
-                data = sock.recv(2048)
-                if not data:
-                    return ("No data received")
-                buffer += data
+                chunk = sock.recv(bufsize)
+                if not chunk:
+                    raise Exception("Connection closed while reading UPS list")
+                data.extend(chunk)
+                continue
+            text = line.decode("utf-8", errors="replace").strip()
+            if text == "END LIST UPS":
+                return "No UPS found"
+            if text.startswith("UPS "):
+                ups_name = text.split()[1]
+                return ups_name
     except Exception as e:
-        raise(f"Could not auto-select UPS")
+        raise Exception(f"Unable to auto-select UPS - {e}")
 
-def read_ups_vars(sock, ups_name, ups_vars):
+def read_ups_vars(sock, ups_name, ups_vars, bufsize=256, eol=b"\n"):
     ups_vars.clear()
     try:
-        sock.sendall(f"LIST VAR {ups_name}\n".encode('utf-8'))
-        buffer = b""
+        sock.sendall(f"LIST VAR {ups_name}\n".encode("utf-8"))
+        data = bytearray()
+        start_marker = f"BEGIN LIST VAR {ups_name}\n".encode("utf-8")
+        end_marker_text = f"END LIST VAR {ups_name}"
         while True:
-            data = sock.recv(256)
-            if not data:
-                return
-            buffer += data
-            marker = f"BEGIN LIST VAR {ups_name}\n".encode("utf-8")
-            if marker in buffer:
-                buffer = buffer.split(marker, 1)[1]
+            chunk = sock.recv(bufsize)
+            if not chunk:
+                raise Exception("No data received after LIST VAR")
+            data.extend(chunk)
+            if start_marker in data:
+                data = bytearray(data.split(start_marker, 1)[1])
                 break
         while True:
-            if b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                text = line.decode('utf-8').strip()
-                marker = f"END LIST VAR {ups_name}\n".encode("utf-8")
-                if marker in buffer:
-                    return
-                elif text.startswith("VAR "):
-                    ups_vars.append(text.split(" ")[2:4])
+            if eol in data:
+                line, data = data.split(eol, 1)
             else:
-                data = sock.recv(2048)
-                if not data:
-                    return ("No data received")
-                buffer += data
+                chunk = sock.recv(bufsize)
+                if not chunk:
+                    raise Exception("No data received after LIST VAR")
+                data.extend(chunk)
+                continue
+            text = line.decode("utf-8", errors="replace").strip()
+            if text == end_marker_text:
+                return
+            if text.startswith("VAR "):
+                parts = text.split()
+                if len(parts) >= 4:
+                    ups_vars.append(parts[2:4])
     except Exception as e:
-        raise Exception(f"Unable to read vars from UPS")
+        raise Exception(f"Unable to read vars from UPS - {e}")
 
 def list_ups_vars(ups_name, ups_vars):
     print(f"UPS: {ups_name}")
@@ -148,10 +151,27 @@ def list_ups_vars(ups_name, ups_vars):
     for var in ups_vars:
         print(f"{var[0]}: {var[1]}")
 
-def read_ups_var(sock, ups_name, var_name):
-    sock.sendall(f"GET VAR {ups_name} {var_name}\n".encode('utf-8'))
-    return recv_line(sock).decode('utf-8').split()[3].strip('"')
-
+def read_ups_var(sock, ups_name, var_name, bufsize=256, eol=b"\n"):
+    try:
+        sock.sendall(f"GET VAR {ups_name} {var_name}\n".encode("utf-8"))
+        data = bytearray()
+        while True:
+            chunk = sock.recv(bufsize)
+            if not chunk:
+                raise Exception("No data received from after GET VAR")
+            data.extend(chunk)
+            if eol in chunk:
+                break
+        line, *_ = data.split(eol, 1)
+        text = line.decode("utf-8", errors="replace").strip()
+        # expected format: GET VAR <ups_name> <var_name> "<value>"
+        parts = text.split()
+        if len(parts) < 4:
+            raise Exception(f"Unexpected response: {text}")
+        return parts[3].strip('"')
+    except Exception as e:
+        raise Exception(f"Unable to read var {var_name} from UPS - {e}")
+    
 def klippy_command(payload, socket_path="/tmp/unix_uds1", timeout=5):
     msg = json.dumps(payload).encode('utf-8') + b'\x03'
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -174,7 +194,7 @@ def klippy_command(payload, socket_path="/tmp/unix_uds1", timeout=5):
     raw = data.rstrip(b'\x03')
     if not raw:
         return False
-    return json.loads(raw.decode('utf-8'))
+    return json.loads(raw.decode('utf-8', errors="replace"))
 
 def get_ace_pro_ids(socket_path="/tmp/unix_uds1"):
     payload = {
@@ -230,7 +250,7 @@ try:
                 print(f"ACE Pro {ace_id} not found or no status available")
 
     if not ups_name:
-        ups_name = auto_select_ups(sock,ups_name)
+        ups_name = auto_select_ups(sock)
         if ups_name == "No UPS found":
             print("No UPS found")
             sys.exit(1)
