@@ -10,7 +10,7 @@
     {
         "cpu": 5,
         "memory": 10
-    }
+    },
 
     "properties": {
         "address": {
@@ -37,7 +37,7 @@
         },
         "text_output": {
             "display": "Status",
-            "type": "report" // Reports will be shown to the user but not editable
+            "type": "report"
         }
     }
 }
