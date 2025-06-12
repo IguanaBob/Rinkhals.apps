@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 
-import socket
-import sys
-import time
 import configparser
 import json
 import random
+import signal
+import socket
+import sys
+import time
+
+def handler(sig, frame):
+    sys.exit(0)
 
 def read_config_file(filename="nut-client-config.ini"):
     config = configparser.ConfigParser()
@@ -230,7 +234,8 @@ def get_ace_pro_status(ace_id, socket_path="/tmp/unix_uds1"):
     return None
 
 ### Main start ###
-
+signal.signal(signal.SIGINT, handler)
+signal.signal(signal.SIGTERM, handler)
 sock = socket.socket()
 ups_vars = []
 
@@ -287,13 +292,13 @@ try:
         time.sleep(5)
 
 except KeyboardInterrupt:
-    print("\nInterrupted by user, shutting down…")
+    print("\nInterrupted by user, shutting down...")
     sys.exit(0)
 except Exception as e:
     print(f"An error occurred: {e}", file=sys.stderr)    
     sys.exit(1)
 finally:
-    print("Closing socket connection")
+    print("Closing socket connection...")
     sock.close()
 
 ##############
@@ -359,8 +364,32 @@ finally:
 # 
 # cd "$(dirname "$0")"
 # ./klippy-command.sh "{\"method\":\"filament_hub/start_drying\",\"params\":{\"duration\":$duration,\"fan_speed\":0,\"id\":$ace_id,\"temp\":$temp},\"id\":$RANDOM}" | jq -e ".result == {}"
+#
+#
+### Working with App Properties ###
+#
+#    RESOLUTION=$(get_app_property 30-mjpg-streamer resolution)
+#    if [ "$RESOLUTION" != "" ]; then
+#        RESOLUTION="-r $RESOLUTION"
+#    else
+#        RESOLUTION="-r 1280x720"
+#    fi
+#
+            # environment = shell(f'. /useremain/rinkhals/.current/tools.sh && python -c "import os, json; print(json.dumps(dict(os.environ)))"')
+            # environment = json.loads(environment)
 
+            # self.KOBRA_MODEL_ID = environment['KOBRA_MODEL_ID']
+            # self.KOBRA_MODEL_CODE = environment['KOBRA_MODEL_CODE']
+            # self.KOBRA_DEVICE_ID = environment['KOBRA_DEVICE_ID']
 
+        #     def load_tool_function(function_name):
+        #         def tool_function(*args):
+        #             return shell(f'. /useremain/rinkhals/.current/tools.sh && {function_name} ' + ' '.join([ str(a) for a in args ]))
+        #         return tool_function
+            
+        #     self.get_app_property = load_tool_function('get_app_property')
+        # except:
+        #     pass
 #
 ### UPS Load testing
 ### These tests were done with a 1000W CyberPower UPS and a Kobra 3 Max with Ace turned off watching ups.load from NUT. Active print was with TPU at 207C nozzle temp and 60C bed temp and garage temp ~85F.
