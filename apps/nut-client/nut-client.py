@@ -7,8 +7,9 @@
 #   - Add support for future config editing on touch UI
 #   - Show and select from list of multiple UPS's in touch UI
 #   - Add logging
-#   - React to UPS states
-#   - Move config files to config directory
+#   - Document expected load for each printer and compare to load limits for UPS.
+#   - Add support for enclosure fan and heating.
+#   - Add support for enclosure lights.
 
 import configparser
 import json
@@ -22,7 +23,7 @@ import time
 def handler(sig, frame):
     sys.exit(0)
 
-def read_config_file(filename="nut-client-config.ini"):
+def read_config_file(filename="config/nut-client-config.ini"):
     config = configparser.ConfigParser()
     try:
         with open(filename, "r") as f:
@@ -363,16 +364,12 @@ def stop_ace_drying(ace_id, socket_path="/tmp/unix_uds1"):
     })
     return response
 
-# For now, until we support multiple UPS's, as it is possible to have the ACE Pro
-# attached to it's own dedicated UPS the drying will not be resumed automatically.
-# def resume_ace_drying(ace_id, duration, temp, socket_path="/tmp/unix_uds1"):
-    # return True
-
 ### Main start ###
 signal.signal(signal.SIGINT, handler)
 signal.signal(signal.SIGTERM, handler)
 sock = socket.socket()
 ups_vars = []
+saved_ace_status = []
 
 try:
     update_app_json()
@@ -397,45 +394,61 @@ try:
     prev_ups_status = ups_status
     prev_battery_charge = battery_charge
     update_app_json(ups_name, ups_status, battery_charge, nut_address, nut_port, nut_user, nut_password)
+    print(ups_status)
+    print(battery_charge)
+
+    if is_on_printer:
+        print(f"Print status: {get_print_status()}")
+        print(f"Nozzle: {get_nozzle_target()}")
+        print(f"Bed: {get_bed_target()}")
+        for ace_id in ace_ids:
+            print(f"ACE Pro ID: {ace_id}")
+            status = get_ace_pro_status(ace_id)
+            if status:
+                print(f"ACE Pro {ace_id} status: {status}")
+            else:
+                print(f"ACE Pro {ace_id} not found or no status available")
 
     while True:
-        print(ups_status)
-        print(battery_charge)
-        if is_on_printer:
-            print(f"Print status: {get_print_status()}")
-            print(f"Nozzle: {get_nozzle_target()}")
-            print(f"Bed: {get_bed_target()}")
-            for ace_id in ace_ids:
-                print(f"ACE Pro ID: {ace_id}")
-                status = get_ace_pro_status(ace_id)
-                if status:
-                    print(f"ACE Pro {ace_id} status: {status}")
-                else:
-                    print(f"ACE Pro {ace_id} not found or no status available")
-                #set_nozzle_target(0)
-            #set_bed_target(0)
 
-        if ( ups_status != prev_ups_status or battery_charge != prev_battery_charge ):
+
+        if ( ups_status != prev_ups_status):
+            print(ups_status)
+            print(battery_charge)
             prev_ups_status = ups_status
             prev_battery_charge = battery_charge
             update_app_json(ups_name, ups_status, battery_charge, nut_address, nut_port, nut_user, nut_password)
             print(f"UPS status changed from {prev_ups_status} to {ups_status}")
+
             if ups_status == "OB":
                 print("UPS is on battery power!")
-                print("Pausing print")
-                # Something to pause the print
-                print("Turning off nozzle heater")
-                # Something to turn off the nozzle heater
+
+                if(get_print_status() == "printing"):
+                    #saved_nozzle_target = get_nozzle_target()
+                    #saved_bed_target = get_bed_target()
+                    print("Pausing print...")
+                    pause_print()
+
+                print("Turning off nozzle heat...")
+                set_nozzle_target(0)
+
+                for ace_id in ace_ids:
+                    if get_ace_pro_status(ace_id) == "drying":
+                        print(f"Stopping ACE Pro drying for ID {ace_id}...")
+                        stop_ace_drying(ace_id)
+            
+            if (battery_charge != prev_battery_charge):
+                if battery_charge <= 30:
+                    print(f"Battery charge is low: {battery_charge}%")
+                    print("Turning off bed heat...")
+                    set_bed_target(0)
+
             if ups_status == "OL":
                 print("UPS is back online!")
-            if battery_charge >= "90":
-                print("Turning on nozzle heater")
-                # Something to turn on the nozzle heater
-                print("Resuming print")
-                # Something to resume the print
+
         time.sleep(5)
         ups_status = read_ups_var(sock, ups_name, "ups.status")
-        ups_charge = read_ups_var(sock, ups_name, "battery.charge")
+        battery_charge = read_ups_var(sock, ups_name, "battery.charge")
 
 except KeyboardInterrupt:
     print("\nInterrupted by user, shutting down...")
