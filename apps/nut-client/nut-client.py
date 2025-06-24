@@ -8,6 +8,7 @@
 #   - Show and select from list of multiple UPS's in touch UI
 #   - Add logging
 #   - React to UPS states
+#   - Move config files to config directory
 
 import configparser
 import json
@@ -185,15 +186,14 @@ def read_ups_var(sock, ups_name, var_name, bufsize=256, eol=b"\n"):
         return parts[3].strip('"')
     except Exception as e:
         raise Exception(f"Unable to read var {var_name} from UPS - {e}")
-    
+
 def klippy_command(payload, socket_path="/tmp/unix_uds1", timeout=5):
     msg = json.dumps(payload).encode('utf-8') + b'\x03'
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
     try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
         sock.connect(socket_path)
         sock.sendall(msg)
-        sock.shutdown(socket.SHUT_WR)
         data = bytearray()
         while True:
             chunk = sock.recv(4096)
@@ -202,13 +202,24 @@ def klippy_command(payload, socket_path="/tmp/unix_uds1", timeout=5):
             data.extend(chunk)
             if b'\x03' in chunk:
                 break
+        sock.shutdown(socket.SHUT_WR)
         sock.shutdown(socket.SHUT_RD)
+    except Exception as e:
+        print(f"Socket error: {e}")
+        return False
     finally:
         sock.close()
+
     raw = data.rstrip(b'\x03')
     if not raw:
+        print("No data returned from Klipper socket.")
         return False
-    return json.loads(raw.decode('utf-8', errors="replace"))
+    try:
+        return json.loads(raw.decode('utf-8', errors='replace'))
+    except json.JSONDecodeError as e:
+        print("Failed to decode JSON:", e)
+        print("Raw response:", raw)
+        return False
 
 def get_ace_pro_ids(socket_path="/tmp/unix_uds1"):
     payload = {
@@ -216,14 +227,16 @@ def get_ace_pro_ids(socket_path="/tmp/unix_uds1"):
         "params": {"objects": {"filament_hub": None}},
         "id": random.randint(0, 32767)
     }
-    resp = klippy_command(payload)
-    if not resp or 'result' not in resp or 'status' not in resp or 'filament_hub' not in resp['result']['status']:
+    resp = klippy_command(payload, socket_path)
+    if not resp:
+        print("No response from klippy_command()")
         return []
-    hubs = resp.get('result', {}) \
-               .get('status', {}) \
-               .get('filament_hub', {}) \
-               .get('filament_hubs', [])
-    return [h.get('id') for h in hubs]    
+    try:
+        hubs = resp["result"]["status"]["filament_hub"]["filament_hubs"]
+        return [hub["id"] for hub in hubs]
+    except (KeyError, TypeError) as e:
+        print("Error parsing filament_hub response:", e)
+        return []
 
 def get_ace_pro_status(ace_id, socket_path="/tmp/unix_uds1"):
     payload = {
@@ -231,16 +244,16 @@ def get_ace_pro_status(ace_id, socket_path="/tmp/unix_uds1"):
         "params": {"objects": {"filament_hub": None}},
         "id": random.randint(0, 32767)
     }
-    resp = klippy_command(payload)
-    if not resp or 'result' not in resp or 'status' not in resp or 'filament_hub' not in resp['result']['status']:
-        return []
-    hubs = resp.get('result', {}) \
-               .get('status', {}) \
-               .get('filament_hub', {}) \
-               .get('filament_hubs', [])
+    resp = klippy_command(payload, socket_path=socket_path)
+    if not resp:
+        return None
+    try:
+        hubs = resp["result"]["status"]["filament_hub"]["filament_hubs"]
+    except (KeyError, TypeError):
+        return None
     for hub in hubs:
-        if hub.get('id') == ace_id:
-            return hub.get('dryer_status', {})
+        if hub.get("id") == ace_id:
+            return hub.get("dryer_status", {}).get("status")
     return None
 
 def update_app_json(ups_name="", ups_status="UK", battery_charge="", nut_address="", nut_port=3493, nut_user="", nut_password=""):
@@ -341,10 +354,19 @@ def set_bed_target(bed_target_temp):
     return send_gcode_script(f"M140 S{bed_target_temp}")
 
 def stop_ace_drying(ace_id, socket_path="/tmp/unix_uds1"):
-    return True
+    response = klippy_command({
+        "method": "filament_hub/stop_drying",
+        "params": {
+            "id": ace_id
+        },
+        "id": random.randint(1, 32767)
+    })
+    return response
 
-def resume_ace_drying(ace_id, duration, temp, socket_path="/tmp/unix_uds1"):
-    return True
+# For now, until we support multiple UPS's, as it is possible to have the ACE Pro
+# attached to it's own dedicated UPS the drying will not be resumed automatically.
+# def resume_ace_drying(ace_id, duration, temp, socket_path="/tmp/unix_uds1"):
+    # return True
 
 ### Main start ###
 signal.signal(signal.SIGINT, handler)
@@ -359,15 +381,6 @@ try:
     if nut_user or nut_password:
         login(sock, nut_user, nut_password)
 
-    if is_on_printer:
-        for ace_id in get_ace_pro_ids():
-            print(f"ACE Pro ID: {ace_id}")
-            status = get_ace_pro_status(ace_id)
-            if status:
-                print(f"ACE Pro {ace_id} status: {status}")
-            else:
-                print(f"ACE Pro {ace_id} not found or no status available")
-
     if not ups_name:
         ups_name = auto_select_ups(sock)
         if ups_name == "No UPS found":
@@ -377,6 +390,8 @@ try:
             print("No data received from LIST UPS")
             sys.exit(1)
 
+    ace_ids = get_ace_pro_ids()
+    print(f"Found ACE Pro IDs: {ace_ids}")
     ups_status = read_ups_var(sock, ups_name, "ups.status")
     battery_charge = read_ups_var(sock, ups_name, "battery.charge")
     prev_ups_status = ups_status
@@ -386,12 +401,20 @@ try:
     while True:
         print(ups_status)
         print(battery_charge)
-        if is_on_printer: print(get_print_status())
-        if is_on_printer: print(get_nozzle_target())
-        if is_on_printer: print(get_bed_target())
-        if is_on_printer: set_nozzle_target(0)
-        if is_on_printer: set_bed_target(0)
-        
+        if is_on_printer:
+            print(f"Print status: {get_print_status()}")
+            print(f"Nozzle: {get_nozzle_target()}")
+            print(f"Bed: {get_bed_target()}")
+            for ace_id in ace_ids:
+                print(f"ACE Pro ID: {ace_id}")
+                status = get_ace_pro_status(ace_id)
+                if status:
+                    print(f"ACE Pro {ace_id} status: {status}")
+                else:
+                    print(f"ACE Pro {ace_id} not found or no status available")
+                #set_nozzle_target(0)
+            #set_bed_target(0)
+
         if ( ups_status != prev_ups_status or battery_charge != prev_battery_charge ):
             prev_ups_status = ups_status
             prev_battery_charge = battery_charge
