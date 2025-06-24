@@ -73,6 +73,7 @@ The target bed temperature is left unchanged until the battery level falls below
 
 ## Other Considerations
 
+* Note that the ACE Pro fan will run for 1-2 minutes after drying is stopped. This is normal.
 * No auto-resums, so you will need to manually reset the tempratures and resume printing and drying after power is restored. This may be done automatically in a future version.
 * Please following all recommenced security practices for both the NUT server and communication between the server and the printer.
 * The ACE Pro should be on battery backup as well to prevent print failures from shutdown of the hub. If desired this could be a seperate UPS to reduce load on the printer's UPS but it will not be monitered in version 1.0 (may come later).

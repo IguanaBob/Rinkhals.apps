@@ -10,6 +10,7 @@
 #   - Document expected load for each printer and compare to load limits for UPS.
 #   - Add support for enclosure fan and heating.
 #   - Add support for enclosure lights.
+#   - Just use app.json for all config and remove nut-client-config.ini?
 
 import configparser
 import json
@@ -357,9 +358,7 @@ def set_bed_target(bed_target_temp):
 def stop_ace_drying(ace_id, socket_path="/tmp/unix_uds1"):
     response = klippy_command({
         "method": "filament_hub/stop_drying",
-        "params": {
-            "id": ace_id
-        },
+        "params": {"id": ace_id},
         "id": random.randint(1, 32767)
     })
     return response
@@ -410,41 +409,42 @@ try:
                 print(f"ACE Pro {ace_id} not found or no status available")
 
     while True:
-
-
         if ( ups_status != prev_ups_status):
             print(ups_status)
             print(battery_charge)
-            prev_ups_status = ups_status
-            prev_battery_charge = battery_charge
             update_app_json(ups_name, ups_status, battery_charge, nut_address, nut_port, nut_user, nut_password)
             print(f"UPS status changed from {prev_ups_status} to {ups_status}")
-
             if ups_status == "OB":
                 print("UPS is on battery power!")
+                print("Waiting 15 seconds before taking action...")
+                time.sleep(15)
+                ups_status = read_ups_var(sock, ups_name, "ups.status")
+                battery_charge = read_ups_var(sock, ups_name, "battery.charge")
+                if ups_status == "OL":
+                    print("UPS is back online, no action needed.")
+                else:
+                    prev_ups_status = ups_status
+                    if(get_print_status() == "printing"):
+                        #saved_nozzle_target = get_nozzle_target()
+                        #saved_bed_target = get_bed_target()
+                        print("Pausing print...")
+                        pause_print()
+                    print("Turning off nozzle heat...")
+                    set_nozzle_target(0)
+                    for ace_id in ace_ids:
+                        if get_ace_pro_status(ace_id) == "drying":
+                            print(f"Stopping ACE Pro drying for ID {ace_id}...")
+                            stop_ace_drying(ace_id)
+            elif ups_status == "OL":
+                prev_ups_status = ups_status
+                print("UPS is online.")
+        if (battery_charge != prev_battery_charge):
+            prev_battery_charge = battery_charge
+            if int(battery_charge) <= int(30):
+                print(f"Battery charge is low: {battery_charge}%")
+                print("Turning off bed heat...")
+                set_bed_target(0)
 
-                if(get_print_status() == "printing"):
-                    #saved_nozzle_target = get_nozzle_target()
-                    #saved_bed_target = get_bed_target()
-                    print("Pausing print...")
-                    pause_print()
-
-                print("Turning off nozzle heat...")
-                set_nozzle_target(0)
-
-                for ace_id in ace_ids:
-                    if get_ace_pro_status(ace_id) == "drying":
-                        print(f"Stopping ACE Pro drying for ID {ace_id}...")
-                        stop_ace_drying(ace_id)
-            
-            if (battery_charge != prev_battery_charge):
-                if battery_charge <= 30:
-                    print(f"Battery charge is low: {battery_charge}%")
-                    print("Turning off bed heat...")
-                    set_bed_target(0)
-
-            if ups_status == "OL":
-                print("UPS is back online!")
 
         time.sleep(5)
         ups_status = read_ups_var(sock, ups_name, "ups.status")
