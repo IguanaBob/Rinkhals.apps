@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 
+## TODO:
+#   - Add support for Ace Pro being on it's own UPS
+#   - Combine get_ and set_ functions for nozzle/bed/print status
+#   - Dynamically set Klippy and Moonraker connection info
+#   - Add support for future config editing on touch UI
+#   - Show and select from list of multiple UPS's in touch UI
+#   - Add logging
+#   - React to UPS states
+
 import configparser
 import json
 import random
+import requests
 import signal
 import socket
 import sys
@@ -234,26 +244,107 @@ def get_ace_pro_status(ace_id, socket_path="/tmp/unix_uds1"):
     return None
 
 def update_app_json(ups_name="", ups_status="UK", battery_charge="", nut_address="", nut_port=3493, nut_user="", nut_password=""):
-    status_map = {
-        "OL": "Online",
-        "OB": "On battery",
-        "UK": "Unknown"
-    }
+    try:
+        with open("app.json.default", 'r') as f:
+            app_data = json.load(f)
+    except Exception as e:
+        raise Exception(f"Error reading app.json.default: {e}")
+    else:
+        status_map = {
+            "OL": "Online",
+            "OB": "On battery",
+            "UK": "Unknown"
+        }
+        app_data["properties"]["ups_name"]["default"] = ups_name
+        app_data["properties"]["ups_status"]["default"] = status_map.get(ups_status, ups_status)
+        app_data["properties"]["battery_charge"]["default"] = battery_charge
+        app_data["properties"]["nut_address"]["default"] = nut_address
+        app_data["properties"]["nut_port"]["default"] = nut_port
+        app_data["properties"]["nut_user"]["default"] = nut_user
+        app_data["properties"]["nut_password"]["default"] = nut_password
+    try:
+        with open("app.json", 'w') as f:
+            json.dump(app_data, f, indent=4)
+    except Exception as e:
+        raise Exception(f"Error writing to app.json: {e}")
+    else:
+        return True
 
-    with open("app.json.default", 'r') as f:
-        app_data = json.load(f)
+def get_print_status():
+    try:
+        response = requests.get("http://localhost:7125/printer/objects/query?print_stats", timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        return data["result"]["status"]["print_stats"]["state"]
+    except Exception as e:
+        print(f"Error fetching print status: {e}")
+        return None
 
-    app_data["properties"]["ups_name"]["default"] = ups_name
-    app_data["properties"]["ups_status"]["default"] = status_map.get(ups_status, ups_status)
-    app_data["properties"]["battery_charge"]["default"] = battery_charge
-    app_data["properties"]["nut_address"]["default"] = nut_address
-    app_data["properties"]["nut_port"]["default"] = nut_port
-    app_data["properties"]["nut_user"]["default"] = nut_user
-    app_data["properties"]["nut_password"]["default"] = nut_password
+def get_nozzle_target():
+    try:
+        response = requests.get("http://localhost:7125/printer/objects/query?extruder", timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        return data["result"]["status"]["extruder"]["target"]
+    except Exception as e:
+        print(f"Error fetching target nozzle temperature: {e}")
+        return None
 
-    with open("app.json", 'w') as f:
-        json.dump(app_data, f, indent=4)
+def get_bed_target():
+    try:
+        response = requests.get("http://localhost:7125/printer/objects/query?heater_bed", timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        return data["result"]["status"]["heater_bed"]["target"]
+    except Exception as e:
+        print(f"Error fetching target bed temperature: {e}")
+        return None
 
+def pause_print():
+    try:
+        response = requests.post("http://localhost:7125/printer/print/pause", timeout=30)
+        response.raise_for_status()
+        print("Print paused successfully.")
+        return response.json()
+    except Exception as e:
+        print(f"Error pausing print: {e}")
+        return None
+
+def resume_print():
+    try:
+        response = requests.post("http://localhost:7125/printer/print/resume", timeout=30)
+        response.raise_for_status()
+        print("Print resumed successfully.")
+        return response.json()
+    except Exception as e:
+        print(f"Error resuming print: {e}")
+        return None
+
+def send_gcode_script(script):
+    try:
+        url = "http://localhost:7125/printer/gcode/script"
+        params = {"script": script}
+        response = requests.post(url, params=params, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("result", None)
+    except Exception as e:
+        print(f"Error sending G-code script: {e}")
+        return None
+
+def set_nozzle_target(nozzle_target_temp):
+    print(f"Setting nozzle target temperature to {nozzle_target_temp}C")
+    return send_gcode_script(f"M104 S{nozzle_target_temp}")
+
+def set_bed_target(bed_target_temp):
+    print(f"Setting bed target temperature to {bed_target_temp}C")
+    return send_gcode_script(f"M140 S{bed_target_temp}")
+
+def stop_ace_drying(ace_id, socket_path="/tmp/unix_uds1"):
+    return True
+
+def resume_ace_drying(ace_id, duration, temp, socket_path="/tmp/unix_uds1"):
+    return True
 
 ### Main start ###
 signal.signal(signal.SIGINT, handler)
@@ -262,6 +353,7 @@ sock = socket.socket()
 ups_vars = []
 
 try:
+    update_app_json()
     read_config_file()
     connect(sock, nut_address, nut_port)
     if nut_user or nut_password:
@@ -286,29 +378,32 @@ try:
             sys.exit(1)
 
     ups_status = read_ups_var(sock, ups_name, "ups.status")
-    prev_ups_status = ups_status
     battery_charge = read_ups_var(sock, ups_name, "battery.charge")
-
-    # need to only do this if a var changes
+    prev_ups_status = ups_status
+    prev_battery_charge = battery_charge
     update_app_json(ups_name, ups_status, battery_charge, nut_address, nut_port, nut_user, nut_password)
 
     while True:
-        ups_status = read_ups_var(sock, ups_name, "ups.status")
-        ups_charge = read_ups_var(sock, ups_name, "battery.charge")
         print(ups_status)
         print(battery_charge)
-        read_ups_vars(sock, ups_name, ups_vars)
-        #print(ups_vars)
-        if ups_status != prev_ups_status:
-            print(f"UPS status changed from {prev_ups_status} to {ups_status}")
+        if is_on_printer: print(get_print_status())
+        if is_on_printer: print(get_nozzle_target())
+        if is_on_printer: print(get_bed_target())
+        if is_on_printer: set_nozzle_target(0)
+        if is_on_printer: set_bed_target(0)
+        
+        if ( ups_status != prev_ups_status or battery_charge != prev_battery_charge ):
             prev_ups_status = ups_status
-            if ups_status == "On Battery":
+            prev_battery_charge = battery_charge
+            update_app_json(ups_name, ups_status, battery_charge, nut_address, nut_port, nut_user, nut_password)
+            print(f"UPS status changed from {prev_ups_status} to {ups_status}")
+            if ups_status == "OB":
                 print("UPS is on battery power!")
                 print("Pausing print")
                 # Something to pause the print
                 print("Turning off nozzle heater")
                 # Something to turn off the nozzle heater
-            if ups_status == "Online":
+            if ups_status == "OL":
                 print("UPS is back online!")
             if battery_charge >= "90":
                 print("Turning on nozzle heater")
@@ -316,6 +411,8 @@ try:
                 print("Resuming print")
                 # Something to resume the print
         time.sleep(5)
+        ups_status = read_ups_var(sock, ups_name, "ups.status")
+        ups_charge = read_ups_var(sock, ups_name, "battery.charge")
 
 except KeyboardInterrupt:
     print("\nInterrupted by user, shutting down...")
@@ -324,8 +421,8 @@ except Exception as e:
     print(f"An error occurred: {e}", file=sys.stderr)    
     sys.exit(1)
 finally:
-    print("Closing socket connection...")\
-    # Need to clear status on exit (and start?)
+    update_app_json()
+    print("Closing socket connection...")
     sock.close()
 
 ##############
