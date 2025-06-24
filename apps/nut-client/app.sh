@@ -22,7 +22,7 @@ start() {
 stop() {
     PIDS=$(ps | grep "nut-client.py" | grep -v grep | awk '{print $1}')
     for PID in $(echo "$PIDS"); do
-        timeout -t 2 kill -2 $PID || timeout -t 2 kill -15 $PID || timeout -30 kill -9 $PID
+        timeout -t 5 kill -15 $PID || timeout -30 kill -9 $PID
     done
 }
 
