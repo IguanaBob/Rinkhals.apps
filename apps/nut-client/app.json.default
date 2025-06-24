@@ -45,7 +45,7 @@
             "default": ""
         },
         "battery_charge": {
-            "display": "Batter charge",
+            "display": "Battery charge",
             "type": "report",
             "default": ""
         }
