@@ -14,8 +14,8 @@
 # Name of the UPS you want to monitor from ups.conf on your NUT server. If empty or missing the first UPS returned by the "UPS LIST" command will be used.
 # ups_name =
 
-address = 
-port = 3493
-user = 
-password = 
+nut_address = 
+nut_port = 3493
+nut_user = 
+nut_password = 
 ups_name = 

@@ -19,38 +19,38 @@ def read_config_file(filename="nut-client-config.ini"):
     except Exception as e:
         raise Exception(f"Error reading config file {filename}: {e}")
     else:
-        global ups_name, address, port, user, password, is_on_printer
+        global ups_name, nut_address, nut_port, nut_user, nut_password, is_on_printer
         section = config["nut"]
         ups_name = section.get('ups_name')  # Need clean error for when configured UPS does not exist
-        address = section.get('address') or "localhost"
-        port = int(section.get('port') or 3493)
-        user = section.get('user')
-        password = section.get('password')
+        nut_address = section.get('nut_address') or "localhost"
+        nut_port = int(section.get('nut_port') or 3493)
+        nut_user = section.get('nut_user')
+        nut_password = section.get('nut_password')
         is_on_printer = section.get('is_on_printer', 'false').lower() in ('true', '1', 'yes') or False  # For testing outside of printer
         return True
 
-def connect(sock, address, port=3493):
+def connect(sock, nut_address, nut_port=3493):
     try:
         sock.settimeout(10)
-        sock.connect((address, port))
+        sock.connect((nut_address, nut_port))
     except Exception as e:
         sock.close()
-        raise Exception(f"Could not connect to {address}:{port} - {e}")
+        raise Exception(f"Could not connect to {nut_address}:{nut_port} - {e}")
     else:
         return True
 
-def login(sock, user=None, password=None, timeout=5):
+def login(sock, nut_user=None, nut_password=None, timeout=5):
     sock.settimeout(timeout)
     try: 
-        if user:
-            sock.sendall(f"USERNAME {user}\n".encode("utf-8"))
+        if nut_user:
+            sock.sendall(f"USERNAME {nut_user}\n".encode("utf-8"))
             resp = recv_line(sock)
             if resp != b"OK":
                 text = resp.decode("utf-8", errors="replace")
                 raise ValueError(f"Username not accepted, server replied: {text!r}")
             print(f"Username accepted")
-        if password:
-            sock.sendall(f"PASSWORD {password}\n".encode("utf-8"))
+        if nut_password:
+            sock.sendall(f"PASSWORD {nut_password}\n".encode("utf-8"))
             resp = recv_line(sock)
             if resp != b"OK":
                 text = resp.decode("utf-8", errors="replace")
@@ -233,6 +233,28 @@ def get_ace_pro_status(ace_id, socket_path="/tmp/unix_uds1"):
             return hub.get('dryer_status', {})
     return None
 
+def update_app_json(ups_name="", ups_status="UK", battery_charge="", nut_address="", nut_port=3493, nut_user="", nut_password=""):
+    status_map = {
+        "OL": "Online",
+        "OB": "On battery",
+        "UK": "Unknown"
+    }
+
+    with open("app.json.default", 'r') as f:
+        app_data = json.load(f)
+
+    app_data["properties"]["ups_name"]["default"] = ups_name
+    app_data["properties"]["ups_status"]["default"] = status_map.get(ups_status, ups_status)
+    app_data["properties"]["battery_charge"]["default"] = battery_charge
+    app_data["properties"]["nut_address"]["default"] = nut_address
+    app_data["properties"]["nut_port"]["default"] = nut_port
+    app_data["properties"]["nut_user"]["default"] = nut_user
+    app_data["properties"]["nut_password"]["default"] = nut_password
+
+    with open("app.json", 'w') as f:
+        json.dump(app_data, f, indent=4)
+
+
 ### Main start ###
 signal.signal(signal.SIGINT, handler)
 signal.signal(signal.SIGTERM, handler)
@@ -241,9 +263,9 @@ ups_vars = []
 
 try:
     read_config_file()
-    connect(sock, address, port)
-    if user or password:
-        login(sock, user, password)
+    connect(sock, nut_address, nut_port)
+    if nut_user or nut_password:
+        login(sock, nut_user, nut_password)
 
     if is_on_printer:
         for ace_id in get_ace_pro_ids():
@@ -265,12 +287,16 @@ try:
 
     ups_status = read_ups_var(sock, ups_name, "ups.status")
     prev_ups_status = ups_status
-    ups_charge = read_ups_var(sock, ups_name, "battery.charge")
+    battery_charge = read_ups_var(sock, ups_name, "battery.charge")
+
+    # need to only do this if a var changes
+    update_app_json(ups_name, ups_status, battery_charge, nut_address, nut_port, nut_user, nut_password)
+
     while True:
         ups_status = read_ups_var(sock, ups_name, "ups.status")
         ups_charge = read_ups_var(sock, ups_name, "battery.charge")
         print(ups_status)
-        print(ups_charge)
+        print(battery_charge)
         read_ups_vars(sock, ups_name, ups_vars)
         #print(ups_vars)
         if ups_status != prev_ups_status:
@@ -284,7 +310,7 @@ try:
                 # Something to turn off the nozzle heater
             if ups_status == "Online":
                 print("UPS is back online!")
-            if ups_charge >= "90":
+            if battery_charge >= "90":
                 print("Turning on nozzle heater")
                 # Something to turn on the nozzle heater
                 print("Resuming print")
@@ -298,7 +324,8 @@ except Exception as e:
     print(f"An error occurred: {e}", file=sys.stderr)    
     sys.exit(1)
 finally:
-    print("Closing socket connection...")
+    print("Closing socket connection...")\
+    # Need to clear status on exit (and start?)
     sock.close()
 
 ##############
