@@ -1,17 +1,13 @@
 {
     "$version": "1",
-
     "name": "NUT-Client",
     "description": "Client for Network UPS Tools (NUT) to monitor UPS device connected to the printer",
     "version": "0.1",
     "depends": [],
-
-    "requirements":
-    {
+    "requirements":{
         "cpu": 5,
-        "memory": 10
+        "memory": 20
     },
-
     "properties": {
         "nut_address": {
             "display": "NUT server",
@@ -21,7 +17,10 @@
         "nut_port": {
             "display": "Port",
             "type": "number",
-            "range": [ 1024, 65536 ],
+            "range": [
+                1024,
+                65536
+            ],
             "default": 3493
         },
         "nut_user": {
