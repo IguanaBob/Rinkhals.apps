@@ -73,6 +73,7 @@ The target bed temperature is left unchanged until the battery level falls below
 
 ## Other Considerations
 
+* Version 1.0 does not support encrypted communication with the NUT server. All communication is sent in the clear, including any optional username and password. It is best to not use a user or password you use anywhere else, and take steps to secure the communication channel between the NUT server and NUT client, such as having them on a segmented VLAN, if possible, or using a Tailscale or SSH tunnel (this is a more advanced configuration which I will add documentation for later).
 * Note that the ACE Pro fan will run for 1-2 minutes after drying is stopped. This is normal.
 * No auto-resums, so you will need to manually reset the tempratures and resume printing and drying after power is restored. This may be done automatically in a future version.
 * Please following all recommenced security practices for both the NUT server and communication between the server and the printer.
